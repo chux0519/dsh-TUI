@@ -118,6 +118,43 @@ const shellOpt = isWin ? { shell: true } : {}
 const cmd = (command, args) =>
   isWin ? [`${command} ${shellQuote(args).join(' ')}`, []] : [command, args]
 
+// Windows desktop's Electron shim can expose a TTY stdout but no TTY stdin
+// (#1761). Only bypass that known shim, and only for an installed npm console
+// host already on PATH. Keep discovery, bootstrap and fallback on the same
+// host by changing this process's PATH before any probes or child launches.
+function preferConsoleDsh(env = process.env, platform = process.platform) {
+  if (platform !== 'win32') return
+  const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH'
+  const dirs = (env[pathKey] ?? '').split(';')
+  const names = ['dsh.com', 'dsh.exe', 'dsh.bat', 'dsh.cmd', 'dsh.ps1', 'dsh']
+  let desktopFound = false
+  for (const dir of dirs) {
+    if (!dir) continue
+    const launcher = names.map(name => join(dir, name)).find(path => existsSync(path))
+    if (!launcher) continue
+    if (!desktopFound) {
+      // Do not override an unknown wrapper or a user's working console host.
+      if (!launcher.toLowerCase().endsWith('.cmd')) return
+      let source
+      try { source = readFileSync(launcher, 'utf8') } catch { return }
+      if (!source.includes('ELECTRON_RUN_AS_NODE') || !source.includes('dsh-desktop-host')) return
+      desktopFound = true
+      continue
+    }
+    const packageDir = join(dir, 'node_modules', '@deepseek-ai', 'dsh')
+    if (readJson(join(packageDir, 'package.json'))?.name !== '@deepseek-ai/dsh'
+      || !existsSync(join(packageDir, 'lib', 'bin.js'))
+      || launcher !== join(dir, 'dsh.cmd')) continue
+    let source
+    try { source = readFileSync(launcher, 'utf8') } catch { continue }
+    if (!/node_modules[\\/]@deepseek-ai[\\/]dsh[\\/]lib[\\/]bin\.js/u.test(source)
+      || source.includes('ELECTRON_RUN_AS_NODE')) continue
+    env[pathKey] = [dir, ...dirs.filter(entry => entry !== dir)].join(';')
+    return
+  }
+}
+preferConsoleDsh()
+
 // dsh CLI 预检（`dsh --version`），异步起、不占关键路径：本包入口不需要 dsh CLI，
 // 只有 `dsh --profile` 出口（`requireDsh()`）与入口失败后的提示判定才消费结果。
 // **不能** unref：`requireDsh()` await 它时若这是唯一活跃句柄，Node 会把顶层 await

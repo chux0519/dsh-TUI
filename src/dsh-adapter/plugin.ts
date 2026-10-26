@@ -191,9 +191,12 @@ export type TuiHostMode = 'interactive' | 'invalid-explicit-launch' | 'headless-
 export function resolveTuiHostMode(
   stdoutIsTTY = process.stdout.isTTY === true,
   env: NodeJS.ProcessEnv = process.env,
+  stdinIsTTY = process.stdin.isTTY === true,
 ): TuiHostMode {
   if (stdoutIsTTY) {
-    return 'interactive'
+    // Electron's Windows GUI executable can inherit console output without
+    // usable console input. Reject before creating UI leases or mounting Ink.
+    return stdinIsTTY ? 'interactive' : 'invalid-explicit-launch'
   }
 
   const explicitTuiLaunch =
@@ -472,9 +475,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const hostMode = resolveTuiHostMode()
   if (hostMode === 'invalid-explicit-launch') {
     if (process.env.DSH_TUI_RESTART_CHILD === '1') {
-      logRestartEvent('boot: TTY gate failed - stdout is not a TTY')
+      logRestartEvent('boot: TTY gate failed - stdin or stdout is not a TTY')
     }
-    throw new Error('dsh-tui requires an interactive terminal (stdout must be a TTY).')
+    throw new Error(
+      'dsh-tui requires an interactive terminal (stdin and stdout must be TTYs). '
+      + 'On Windows, the DeepSeek Harness desktop Electron shim may have no TTY stdin. '
+      + 'Install the Node.js CLI with npm install -g @deepseek-ai/dsh and launch dsh-tui, '
+      + 'or put its dsh.cmd before the desktop shim on PATH.',
+    )
   }
   if (hostMode === 'headless-host') {
     // Web / Tauri / GUI hosts load the plugin from the profile without being

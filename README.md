@@ -122,6 +122,14 @@ Download `dsh-tui-setup-win-x64.exe` from [Releases](https://github.com/ccch1mne
 
 ### Command-line installation
 
+On Windows, if the first `dsh` on PATH is the DeepSeek Harness desktop Electron
+shim, `dsh-tui` / `dst` prefer an installed npm `@deepseek-ai/dsh` console host
+later on PATH, for this launch and its children only. If none is available,
+install it with `npm install -g @deepseek-ai/dsh`. Both stdin and stdout must be
+TTYs; a host with console output but no interactive input now fails before the
+UI mounts, with recovery instructions. For direct `dsh --profile dsh-tui`
+launches, put the npm CLI's directory before the desktop shim on PATH.
+
 Prerequisites: [Node.js](https://nodejs.org/en) and
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness).
 The `deepseek-official` API-key route needs `DEEPSEEK_API_KEY`. On DSH

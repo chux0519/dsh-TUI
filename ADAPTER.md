@@ -111,6 +111,10 @@ Cordis 插件消费公开服务，不复刻领域逻辑或日志格式。厂商�
 (docs/standalone-host-design.md),契约单一来源是
 `src/dsh-adapter/host-contract.ts`:
 
+Windows 启动器在探测宿主前，仅对已识别的桌面 Electron shim 优先选择 PATH
+后方完整的 npm 控制台宿主（#1761）；调整只作用于当前进程及其子进程。宿主模块
+发现、自举和回退启动因此仍消费同一份 PATH，不单独选择另一份模块树。
+
 - **依赖**:`host-dsh.ts` 取类型的 `dsh-app-boot`、`dsh-cmdline`、`dsh-home-paths`、
   `dsh-http-proxy`、`dsh-launch-environment`(`HOST_TYPE_PACKAGES`)是 optional peer + dev、
   进 blessed 清单。宿主 CLI `@deepseek-ai/dsh` **不是**依赖(它的依赖树是整个 CLI):

@@ -25,7 +25,8 @@
  * 运行：pnpm build && node scripts/verify-launcher.mjs
  */
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import vm from 'node:vm'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -113,6 +114,7 @@ function runBin(args, extraEnv = {}, { delegating = false } = {}) {
     env: {
       PATH: stubPath,
       HOME: tmp,
+      USERPROFILE: tmp,
       DSH_HOME: home,
       DSH_STUB_LOG: stubLog,
       // stub 安装创建的判定文件版本默认与启动器对齐——否则自举后的版本
@@ -409,6 +411,68 @@ check('host entry: DSH_TUI_HOST_ENTRY=0 keeps DSH on dsh --profile too', launchC
 check('shellQuote: plain tokens pass through', shellQuote(['plugin', '--profile', 'dsh-tui']).join(' ') === 'plugin --profile dsh-tui')
 check('shellQuote: spaces get quoted', shellQuote(['a b']).join(' ') === '"a b"')
 check('shellQuote: embedded quotes are doubled', shellQuote(['a"b c']).join(' ') === '"a""b c"')
+
+// #1761: exercise the real inline selector on every CI OS using filesystem
+// fixtures. The launcher must remain a single file for /update migration.
+{
+  const source = readFileSync(bin, 'utf8')
+  const start = source.indexOf('function preferConsoleDsh(')
+  const end = source.indexOf('\npreferConsoleDsh()', start)
+  const select = new vm.Script(source.slice(start, end) + '\npreferConsoleDsh').runInNewContext({
+    join, existsSync, readFileSync,
+    readJson: path => { try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return undefined } },
+  })
+  const desktop = join(tmp, 'Desktop Host')
+  const consoleDir = join(tmp, 'npm console')
+  const unknown = join(tmp, 'custom-wrapper')
+  for (const dir of [desktop, consoleDir, unknown]) mkdirSync(dir, { recursive: true })
+  writeFileSync(join(desktop, 'dsh.cmd'), '@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"DeepSeek Harness.exe" "app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" %*\r\n')
+  writeFileSync(join(unknown, 'dsh.cmd'), '@echo off\r\ncustom-dsh %*\r\n')
+  const packageDir = join(consoleDir, 'node_modules', '@deepseek-ai', 'dsh')
+  mkdirSync(join(packageDir, 'lib'), { recursive: true })
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh' }))
+  writeFileSync(join(packageDir, 'lib', 'bin.js'), '')
+  writeFileSync(join(consoleDir, 'dsh.cmd'), '@echo off\r\nnode "%~dp0/node_modules/@deepseek-ai/dsh/lib/bin.js" %*\r\n')
+  const selectPath = (path, platform = 'win32', key = 'PATH') => {
+    const env = { [key]: path }
+    select(env, platform)
+    return env[key]
+  }
+  check('desktop host: selects later console host, including paths with spaces',
+    selectPath(`${desktop};${consoleDir}`) === `${consoleDir};${desktop}`)
+  check('desktop host: supports Windows Path casing',
+    selectPath(`${desktop};${consoleDir}`, 'win32', 'Path') === `${consoleDir};${desktop}`)
+  check('desktop host: no replacement leaves PATH unchanged', selectPath(desktop) === desktop)
+  check('desktop host: never overrides an unknown first wrapper',
+    selectPath(`${unknown};${desktop};${consoleDir}`) === `${unknown};${desktop};${consoleDir}`)
+  check('desktop host: console-first and POSIX paths stay unchanged',
+    selectPath(`${consoleDir};${desktop}`) === `${consoleDir};${desktop}`
+    && selectPath(`${desktop};${consoleDir}`, 'linux') === `${desktop};${consoleDir}`)
+  writeFileSync(join(consoleDir, 'dsh.exe'), '')
+  check('desktop host: a higher-priority executable is not mistaken for the npm shim',
+    selectPath(`${desktop};${consoleDir}`) === `${desktop};${consoleDir}`)
+  rmSync(join(consoleDir, 'dsh.exe'))
+  writeFileSync(join(packageDir, 'package.json'), '{broken')
+  check('desktop host: malformed package manifest is not selected',
+    selectPath(`${desktop};${consoleDir}`) === `${desktop};${consoleDir}`)
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh' }))
+  if (isWin) {
+    // Run the real launcher with the desktop shim first. The console stub
+    // records probes and launches, including argument and exit-code forwarding.
+    writeFileSync(join(consoleDir, 'dsh.cmd'), readFileSync(join(stubDir, 'dsh.cmd'), 'utf8')
+      + '\r\nrem node_modules/@deepseek-ai/dsh/lib/bin.js\r\n')
+    resetStubLog()
+    const result = runBin(['hello world'], {
+      PATH: `${desktop};${consoleDir};${stubPath}`,
+      DSH_STUB_EXIT: '17',
+    })
+    check('desktop host: child launch uses console host with argv and exit code preserved',
+      result.status === 17 && stubCalls().some(call => call.includes('<--profile><dsh-tui><--><hello world>')))
+  }
+  rmSync(join(packageDir, 'lib', 'bin.js'))
+  check('desktop host: incomplete console install is not selected',
+    selectPath(`${desktop};${consoleDir}`) === `${desktop};${consoleDir}`)
+}
 
 rmSync(tmp, { recursive: true, force: true })
 if (failures > 0) {

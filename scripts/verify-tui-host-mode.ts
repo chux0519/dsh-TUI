@@ -26,9 +26,31 @@ const check = (name: string, ok: boolean, detail = ''): void => {
 const cases: {
   name: string
   stdoutTty: boolean
+  stdinTty?: boolean
   env: Record<string, string>
   expected: ReturnType<typeof resolveTuiHostMode>
 }[] = [
+  {
+    name: 'TTY stdout + non-TTY stdin + launcher marker → invalid-explicit-launch',
+    stdoutTty: true,
+    stdinTty: false,
+    env: { DSH_TUI_LAUNCHER_VERSION: '9.9.9' },
+    expected: 'invalid-explicit-launch',
+  },
+  {
+    name: 'TTY stdout + non-TTY stdin without marker → invalid-explicit-launch',
+    stdoutTty: true,
+    stdinTty: false,
+    env: {},
+    expected: 'invalid-explicit-launch',
+  },
+  {
+    name: 'neither stream is a TTY + no marker → headless-host',
+    stdoutTty: false,
+    stdinTty: false,
+    env: {},
+    expected: 'headless-host',
+  },
   {
     name: 'tty + no launcher marker → interactive',
     stdoutTty: true,
@@ -56,7 +78,7 @@ const cases: {
 ]
 
 for (const c of cases) {
-  const actual = resolveTuiHostMode(c.stdoutTty, c.env)
+  const actual = resolveTuiHostMode(c.stdoutTty, c.env, c.stdinTty ?? true)
   check(`${c.name} (got ${actual})`, actual === c.expected)
 }
 
@@ -79,6 +101,7 @@ if (prevStandalone === undefined) {
 // and restore afterwards (no own descriptor on real TTYs, so delete restores).
 
 const stdoutIsTTYOwn = Object.prototype.hasOwnProperty.call(process.stdout, 'isTTY')
+const stdinIsTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
 const stdoutIsTTYDescriptor = stdoutIsTTYOwn
   ? Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   : undefined
@@ -121,7 +144,28 @@ try {
     message.includes('interactive terminal'),
     message,
   )
+
+  // Reproduce the desktop Electron shape, including direct dsh --profile
+  // launches without our marker. apply must reject before mounting the UI.
+  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
+  Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true })
+  for (const explicit of [true, false]) {
+    if (explicit) process.env.DSH_TUI_LAUNCHER_VERSION = '9.9.9'
+    else delete process.env.DSH_TUI_LAUNCHER_VERSION
+    let errorMessage = ''
+    try {
+      await apply(ctx, {} as unknown as Config)
+    } catch (error) {
+      errorMessage = error instanceof Error ? error.message : String(error)
+    }
+    check(`Electron stdin: rejects before render (marker=${explicit})`,
+      errorMessage.includes('stdin and stdout must be TTYs'), errorMessage)
+    check(`Electron stdin: actionable console-host guidance (marker=${explicit})`,
+      errorMessage.includes('Electron') && errorMessage.includes('npm install -g @deepseek-ai/dsh'), errorMessage)
+  }
 } finally {
+  if (stdinIsTTYDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinIsTTYDescriptor)
+  else Reflect.deleteProperty(process.stdin, 'isTTY')
   logger.info = origInfo
   if (prevLauncherVersion === undefined) {
     delete process.env.DSH_TUI_LAUNCHER_VERSION

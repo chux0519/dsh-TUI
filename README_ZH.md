@@ -115,6 +115,13 @@ DSH 0.2.1 起，Agent 把会话切到别的目录（`working_directory` 工具�
 
 ### 命令行安装
 
+Windows 上，如果 PATH 中最先找到的 `dsh` 是 DeepSeek Harness 桌面版的 Electron
+启动脚本，`dsh-tui` / `dst` 会优先使用 PATH 后方已安装的 npm `@deepseek-ai/dsh`
+控制台宿主，仅对本次启动及其子进程生效。若尚未安装，请运行
+`npm install -g @deepseek-ai/dsh`。stdin 和 stdout 都必须是 TTY；只有控制台输出、
+没有交互输入的宿主会在挂载 UI 前报错并给出恢复指引。直接通过
+`dsh --profile dsh-tui` 启动时，请把 npm CLI 的目录排在桌面版脚本之前。
+
 前置条件：安装 [Node.js](https://nodejs.org/zh-cn) 与 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)。`deepseek-official` API key 路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 的标准 profile 也可用 `/auth login deepseek-account` 登录，再通过 `/model` 选择独立的账号路由。其他支持的账号可在启动后通过 `/provider` 或 `/auth` 登录。
 
 主适配目标为 DSH `0.2.1-rc.3`，已接入新版 Shell API、V4 会话消息、声明式预设与
